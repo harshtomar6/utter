@@ -8,6 +8,7 @@ mod error;
 mod llm;
 mod prompt;
 mod risk;
+mod scanner;
 
 use config::{Config, Overrides, Paths};
 
