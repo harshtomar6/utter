@@ -1,0 +1,98 @@
+# Release pipeline.
+#
+# Hand-authored rather than produced by `dist generate --mode=ci`, which silently
+# emits nothing on cargo-dist 0.32 (see README). The build steps still go through
+# cargo-dist, so artifact naming, checksums and the generated installer are
+# exactly what `dist plan` describes — only the job wiring is ours.
+#
+# Trigger:  git tag v0.1.0 && git push origin v0.1.0
+name: release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  DIST_VERSION: 0.32.0
+
+jobs:
+  # Fail fast on a tag that does not match Cargo.toml, before spending four
+  # runners on it.
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dist
+        run: cargo install cargo-dist --version "$DIST_VERSION" --locked
+      - name: Check the tag matches Cargo.toml
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          crate=$(cargo metadata --no-deps --format-version 1 \
+                  | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          if [ "${{ github.event_name }}" = "push" ] && [ "$tag" != "$crate" ]; then
+            echo "tag v$tag does not match Cargo.toml version $crate" >&2
+            exit 1
+          fi
+      - run: dist plan
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14          # arm64 runner
+          - target: x86_64-apple-darwin
+            os: macos-13          # x86_64 runner
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm  # native arm64, so no cross-linker needed
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update stable --no-self-update && rustup target add ${{ matrix.target }}
+      - name: Install dist
+        run: cargo install cargo-dist --version "$DIST_VERSION" --locked
+      - name: Build artifacts
+        run: dist build --artifacts=local --target=${{ matrix.target }} --output-format=json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.target }}
+          path: |
+            target/distrib/*.tar.xz
+            target/distrib/*.sha256
+          if-no-files-found: error
+
+  # Installer and checksums are built once, after every binary exists.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dist
+        run: cargo install cargo-dist --version "$DIST_VERSION" --locked
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          merge-multiple: true
+          path: target/distrib
+      - name: Build the installer and checksums
+        run: dist build --artifacts=global --output-format=json
+      - name: Publish to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/distrib/*.tar.xz
+            target/distrib/*.sha256
+            target/distrib/sha256.sum
+            target/distrib/utter-installer.sh
+            install.sh
+          generate_release_notes: true
+          fail_on_unmatched_files: true
