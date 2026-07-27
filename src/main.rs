@@ -3,8 +3,10 @@
 #![allow(dead_code, unused_imports)]
 
 mod config;
+mod context;
 mod error;
 mod llm;
+mod prompt;
 mod risk;
 
 use config::{Config, Overrides, Paths};
