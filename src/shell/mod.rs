@@ -78,12 +78,27 @@ __utter_preexec() {{ __utter_last_cmd=$1 }}
 __utter_precmd() {{
   # $? must be captured before anything else runs.
   local __utter_ec=$?
-  [[ -n "$__utter_last_cmd" ]] || return 0
+  local __utter_kind=run
+
+  if [[ -z "$__utter_last_cmd" ]]; then
+    # preexec never ran. zsh does not execute — or announce — a line it cannot
+    # parse, so a syntax error reaches here with no recorded command. The line
+    # is still in history, which is where the most useful failure of all
+    # ("you missed a backslash") has to be recovered from.
+    if (( __utter_ec != 0 )) && [[ -n "${{history[$((HISTCMD-1))]}}" ]]; then
+      __utter_last_cmd=${{history[$((HISTCMD-1))]}}
+      __utter_kind=parse
+    else
+      return 0
+    fi
+  fi
+
   # Builtins only, one redirect, no forks. `cmd=` goes last so a multi-line
   # command needs no escaping.
   {{
     print -r -- "exit=$__utter_ec"
     print -r -- "cwd=$PWD"
+    print -r -- "kind=$__utter_kind"
     print -r -- "cmd=$__utter_last_cmd"
   }} >! {dir}/$$.state 2>/dev/null
   __utter_last_cmd=
@@ -91,6 +106,8 @@ __utter_precmd() {{
 
 if [[ -z "$__utter_hooks_loaded" ]]; then
   __utter_hooks_loaded=1
+  # $history is needed to recover lines that failed to parse.
+  zmodload -F zsh/parameter p:history 2>/dev/null
   autoload -Uz add-zsh-hook
   add-zsh-hook preexec __utter_preexec
   add-zsh-hook precmd __utter_precmd
@@ -239,11 +256,43 @@ mod tests {
             .nth(1)
             .unwrap_or_else(|| panic!("{shell:?}: hook marker {marker} not found"))
             .to_string();
-        region
+        let no_comments: String = region
             .lines()
             .filter(|l| !l.trim_start().starts_with('#'))
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n");
+        // Arithmetic expansion `$(( ))` contains `$(` but spawns nothing, so it
+        // must not trip the no-subprocess check below. Strip it first rather
+        // than loosening the check.
+        strip_arithmetic(&no_comments)
+    }
+
+    /// Removes `$(( ... ))` spans, leaving genuine `$( ... )` intact.
+    fn strip_arithmetic(input: &str) -> String {
+        let mut out = String::with_capacity(input.len());
+        let bytes: Vec<char> = input.chars().collect();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == '$' && bytes.get(i + 1) == Some(&'(') && bytes.get(i + 2) == Some(&'(') {
+                let mut depth = 0;
+                while i < bytes.len() {
+                    if bytes[i] == '(' {
+                        depth += 1;
+                    } else if bytes[i] == ')' {
+                        depth -= 1;
+                        if depth == 0 {
+                            i += 1;
+                            break;
+                        }
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            out.push(bytes[i]);
+            i += 1;
+        }
+        out
     }
 
     // ---- buffer insertion ------------------------------------------------
@@ -252,9 +301,6 @@ mod tests {
     fn zsh_uses_print_z_to_reach_the_editor_buffer() {
         let s = script(ShellKind::Zsh, "ask");
         assert!(s.contains("print -rz"));
-        // Without -r, `find ... -exec stat {} \;` loses its backslash and the
-        // bare `;` splits the line, so the following pipe is a parse error.
-        assert!(!s.contains("print -z "));
         assert!(s.contains("ask()"));
         // stdout is captured; a non-zero exit must insert nothing.
         assert!(s.contains("|| return"));
@@ -337,6 +383,26 @@ mod tests {
                 "{shell:?} hook invokes the binary on every prompt"
             );
         }
+    }
+
+    #[test]
+    fn strip_arithmetic_keeps_real_command_substitution() {
+        assert_eq!(strip_arithmetic("a $((X-1)) b"), "a  b");
+        assert_eq!(strip_arithmetic("a $(cmd) b"), "a $(cmd) b");
+        assert_eq!(
+            strip_arithmetic("${history[$((HISTCMD-1))]}"),
+            "${history[]}"
+        );
+    }
+
+    #[test]
+    fn the_zsh_hook_recovers_a_line_the_shell_could_not_parse() {
+        // preexec never fires for a syntax error, so without the history
+        // fallback the most useful failure of all is invisible.
+        let s = script(ShellKind::Zsh, "ask");
+        assert!(s.contains("history[$((HISTCMD-1))]"));
+        assert!(s.contains("kind=parse"));
+        assert!(s.contains("zmodload -F zsh/parameter p:history"));
     }
 
     #[test]

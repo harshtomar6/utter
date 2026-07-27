@@ -47,6 +47,7 @@ pub async fn run(args: &GenArgs, global: &GlobalArgs, cfg: &Config, paths: &Path
             command: &f.command,
             exit_code: f.exit_code,
             cwd: f.cwd.as_deref(),
+            parse_error: f.parse_error,
         }),
         explain: global.explain,
     });
@@ -250,12 +251,25 @@ fn resolve_failure(
 /// persisted — a stored turn reading "fix it" would be useless context two turns
 /// later.
 fn describe_failure(state: &ShellState) -> String {
-    let mut request = format!(
-        "The command `{}` just failed with exit code {}.",
-        state.command, state.exit_code
-    );
+    let mut request = if state.parse_error {
+        format!(
+            "The shell could not parse this line, so it never ran: `{}`",
+            state.command
+        )
+    } else {
+        format!(
+            "The command `{}` just failed with exit code {}.",
+            state.command, state.exit_code
+        )
+    };
     if let Some(cwd) = &state.cwd {
-        request.push_str(&format!(" It ran in {cwd}."));
+        // "It ran in ..." would contradict the sentence above for a line the
+        // shell refused to execute.
+        if state.parse_error {
+            request.push_str(&format!(" It was typed in {cwd}."));
+        } else {
+            request.push_str(&format!(" It ran in {cwd}."));
+        }
     }
     request.push_str(" Explain the cause in one line and give me the corrected command.");
     request
@@ -308,6 +322,7 @@ mod tests {
             command: command.to_string(),
             exit_code,
             cwd: cwd.map(str::to_string),
+            parse_error: false,
         }
     }
 
@@ -319,6 +334,17 @@ mod tests {
         assert!(request.contains("exit code 1"));
         assert!(request.contains("/tmp"));
         assert!(request.contains("corrected command"));
+    }
+
+    #[test]
+    fn a_parse_error_never_claims_the_command_ran() {
+        let mut st = state("find . -exec stat {} ; | sort", 1, Some("/tmp"));
+        st.parse_error = true;
+        let request = describe_failure(&st);
+        assert!(request.contains("could not parse"));
+        assert!(request.contains("never ran"));
+        assert!(!request.contains("It ran in"), "{request}");
+        assert!(request.contains("It was typed in /tmp"));
     }
 
     #[test]

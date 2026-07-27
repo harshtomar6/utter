@@ -13,6 +13,8 @@ pub struct Failure<'a> {
     pub command: &'a str,
     pub exit_code: i32,
     pub cwd: Option<&'a str>,
+    /// The shell refused to parse the line rather than running it.
+    pub parse_error: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +77,14 @@ pub fn build(input: &PromptInput<'_>) -> String {
         let _ = writeln!(p, "Exit code: {}", fail.exit_code);
         if let Some(cwd) = fail.cwd {
             let _ = writeln!(p, "Ran in: {cwd}");
+        }
+        if fail.parse_error {
+            p.push_str(
+                "\nThe shell could not PARSE this line — it never ran. The fault is in the \
+                 text itself: quoting, escaping, an unbalanced quote or bracket, or a \
+                 metacharacter that needed escaping (a bare `;` inside `find -exec` is the \
+                 classic one). Do not look for a runtime cause.\n",
+            );
         }
         p.push_str(
             "\nThe user invoked this tool with no request, which means: explain and fix that \
@@ -159,6 +169,7 @@ mod tests {
                 command: "tar -xf archive.tar.gz",
                 exit_code: 1,
                 cwd: Some("/tmp"),
+                parse_error: false,
             }),
         ));
         assert!(p.contains("tar -xf archive.tar.gz"));
@@ -166,6 +177,23 @@ mod tests {
         assert!(p.contains("Ran in: /tmp"));
         // The model must not invent an error message it never received.
         assert!(p.contains("do not claim to have seen an error message"));
+    }
+
+    #[test]
+    fn a_parse_error_tells_the_model_the_line_never_ran() {
+        // Otherwise it hunts for a runtime cause that does not exist.
+        let c = ctx(Flavor::Bsd);
+        let p = build(&input(
+            &c,
+            Some(Failure {
+                command: "find . -exec stat {} ; | sort",
+                exit_code: 1,
+                cwd: None,
+                parse_error: true,
+            }),
+        ));
+        assert!(p.contains("could not PARSE"));
+        assert!(p.contains("Do not look for a runtime cause"));
     }
 
     #[test]

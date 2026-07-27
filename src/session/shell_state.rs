@@ -5,6 +5,7 @@
 //! ```text
 //! exit=1
 //! cwd=/Users/u/dev
+//! kind=run
 //! cmd=tar -xf archive.tar.gz
 //! ```
 //!
@@ -35,6 +36,10 @@ pub struct ShellState {
     pub command: String,
     pub exit_code: i32,
     pub cwd: Option<String>,
+    /// True when the shell rejected the line before running it — a syntax
+    /// error. Worth distinguishing: the fix is in the text itself, and the
+    /// model should not hunt for a runtime cause that does not exist.
+    pub parse_error: bool,
 }
 
 impl ShellState {
@@ -73,6 +78,7 @@ pub fn clear(shell_dir: &Path, key: &str) -> Result<bool> {
 pub fn parse(raw: &str) -> Option<ShellState> {
     let mut exit_code = None;
     let mut cwd = None;
+    let mut parse_error = false;
 
     let mut rest = raw;
     loop {
@@ -86,6 +92,7 @@ pub fn parse(raw: &str) -> Option<ShellState> {
                 command,
                 exit_code: exit_code?,
                 cwd,
+                parse_error,
             });
         }
 
@@ -97,6 +104,8 @@ pub fn parse(raw: &str) -> Option<ShellState> {
 
         if let Some(value) = line.strip_prefix("exit=") {
             exit_code = value.trim().parse::<i32>().ok();
+        } else if let Some(value) = line.strip_prefix("kind=") {
+            parse_error = value.trim() == "parse";
         } else if let Some(value) = line.strip_prefix("cwd=") {
             let value = value.trim();
             if !value.is_empty() {
