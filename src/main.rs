@@ -11,6 +11,7 @@ mod output;
 mod prompt;
 mod risk;
 mod scanner;
+mod session;
 
 use config::{Config, Overrides, Paths};
 
