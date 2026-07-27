@@ -4,8 +4,10 @@
 
 mod config;
 mod context;
+mod conversation;
 mod error;
 mod llm;
+mod output;
 mod prompt;
 mod risk;
 mod scanner;
