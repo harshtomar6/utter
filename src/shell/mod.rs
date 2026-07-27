@@ -48,8 +48,11 @@ pub fn init_script(shell: ShellKind, alias: &str, shell_dir: &Path) -> String {
     }
 }
 
-/// `print -z` pushes onto zsh's editor buffer stack, so the command appears at the
-/// next prompt with the cursor at the end — editable, and not run until Enter.
+/// `print -rz` pushes onto zsh's editor buffer stack, so the command appears at
+/// the next prompt with the cursor at the end — editable, and not run until Enter.
+///
+/// The `-r` is load-bearing. Without it `print` expands escape sequences, so a
+/// command containing `\;`, `\.` or `\n` arrives at the prompt corrupted.
 ///
 /// `$$` rather than `$PPID` or a random id: it is the interactive shell's own pid
 /// and POSIX guarantees it is unchanged inside the `$(...)` subshell the function
@@ -64,7 +67,10 @@ export {env}=$$
   local __utter_cmd
   # Command on stdout, everything else on stderr, so this captures only the command.
   __utter_cmd="$({bin} gen "$@")" || return $?
-  [[ -n "$__utter_cmd" ]] && print -z -- "$__utter_cmd"
+  # `-r` is essential: without it print interprets escape sequences and eats the
+  # backslash in things like `find ... -exec stat {{}} \;`, turning it into a bare
+  # `;` that zsh reads as a command separator.
+  [[ -n "$__utter_cmd" ]] && print -rz -- "$__utter_cmd"
 }}
 
 __utter_preexec() {{ __utter_last_cmd=$1 }}
@@ -245,7 +251,10 @@ mod tests {
     #[test]
     fn zsh_uses_print_z_to_reach_the_editor_buffer() {
         let s = script(ShellKind::Zsh, "ask");
-        assert!(s.contains("print -z"));
+        assert!(s.contains("print -rz"));
+        // Without -r, `find ... -exec stat {} \;` loses its backslash and the
+        // bare `;` splits the line, so the following pipe is a parse error.
+        assert!(!s.contains("print -z "));
         assert!(s.contains("ask()"));
         // stdout is captured; a non-zero exit must insert nothing.
         assert!(s.contains("|| return"));
