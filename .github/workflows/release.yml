@@ -48,7 +48,11 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-14          # arm64 runner
           - target: x86_64-apple-darwin
-            os: macos-13          # x86_64 runner
+            # Cross-compiled from the arm64 runner: GitHub retired the macos-13
+            # x86_64 image, and that label now queues forever rather than
+            # failing. Apple's toolchain targets x86_64 from arm natively, so no
+            # cross-linker is needed.
+            os: macos-14
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
