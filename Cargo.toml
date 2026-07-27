@@ -44,6 +44,12 @@ targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-
 install-path = "~/.local/bin"
 # Where to host releases
 hosting = "github"
+# `dist plan` otherwise refuses to run because .github/workflows/release.yml is
+# not the file it would generate. It is hand-authored because
+# `dist generate --mode=ci` exits 0 without writing anything on 0.32, and the
+# interactive `dist init` wizard cannot be driven headlessly. The build steps
+# still call `dist build`, so artifacts, names and checksums remain canonical.
+allow-dirty = ["ci"]
 
 [profile.release]
 opt-level = 3
