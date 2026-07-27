@@ -4,6 +4,7 @@
 
 mod config;
 mod error;
+mod llm;
 mod risk;
 
 use config::{Config, Overrides, Paths};
