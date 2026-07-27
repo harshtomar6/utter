@@ -264,7 +264,11 @@ configure_key() {
     # Actually try to open the terminal rather than testing the device file.
     # `[ -r /dev/tty ]` can succeed in CI where the node exists but the process
     # has no controlling terminal — and a `read` there would hang the build.
-    if [ "$NO_KEY" -eq 1 ] || ! : < /dev/tty 2>/dev/null; then
+    # The probe runs in a subshell: a redirection failure is reported by the
+    # shell itself, so `2>/dev/null` on the bare command does not suppress it and
+    # a container install prints "/dev/tty: Device not configured" before the
+    # instructions. Redirecting the subshell's stderr does suppress it.
+    if [ "$NO_KEY" -eq 1 ] || ! ( : < /dev/tty ) 2>/dev/null; then
         key_instructions "$rc" "$config_file"
         return
     fi
