@@ -14,7 +14,20 @@ pub enum Flavor {
 }
 
 impl Flavor {
-    fn from_os(os: &str) -> Self {
+    /// `msys` is the MSYSTEM environment variable, set by Git Bash and MSYS2.
+    ///
+    /// It has to be consulted because `std::env::consts::OS` only says
+    /// "windows", while the shell we are actually serving ships GNU coreutils —
+    /// so `sed -i` takes no suffix, `stat -c` works, and `date -d` parses. Going
+    /// by the OS alone would hand a Git Bash user portable-POSIX advice and lose
+    /// every GNU-specific flag that does in fact work there.
+    fn detect(os: &str, msys: Option<&str>) -> Self {
+        if os == "windows" {
+            return match msys {
+                Some(m) if !m.is_empty() => Flavor::Gnu,
+                _ => Flavor::Unknown,
+            };
+        }
         match os {
             "macos" | "freebsd" | "openbsd" | "netbsd" | "dragonfly" | "ios" => Flavor::Bsd,
             "linux" | "android" => Flavor::Gnu,
@@ -141,6 +154,7 @@ impl ShellContext {
     /// runs, which is exactly why the system prompt is never persisted.
     pub fn probe() -> Self {
         let os_key = std::env::consts::OS;
+        let msystem = std::env::var("MSYSTEM").ok();
         let tools: Vec<&'static str> = PROBED
             .iter()
             .copied()
@@ -148,9 +162,9 @@ impl ShellContext {
             .collect();
 
         Self {
-            os: pretty_os(os_key),
+            os: pretty_os(os_key, msystem.as_deref()),
             arch: std::env::consts::ARCH.to_string(),
-            flavor: Flavor::from_os(os_key),
+            flavor: Flavor::detect(os_key, msystem.as_deref()),
             shell: std::env::var("SHELL").unwrap_or_else(|_| "unknown".into()),
             cwd: std::env::current_dir()
                 .map(|p| p.display().to_string())
@@ -185,10 +199,17 @@ impl ShellContext {
 /// No exact OS version. Reading it costs a `sw_vers` spawn on macOS for a fact
 /// that almost never changes command syntax — the BSD/GNU split already carries
 /// that signal, and startup latency is a product requirement.
-fn pretty_os(os_key: &str) -> String {
+fn pretty_os(os_key: &str, msys: Option<&str>) -> String {
     match os_key {
         "macos" => "macOS".to_string(),
         "linux" => linux_pretty_name().unwrap_or_else(|| "Linux".to_string()),
+        // Name the environment, not just the OS: a command that works in Git Bash
+        // may be meaningless in PowerShell, and the model should know which it is
+        // writing for.
+        "windows" => match msys {
+            Some(m) if !m.is_empty() => format!("Windows ({m}, MSYS2/Git Bash environment)"),
+            _ => "Windows".to_string(),
+        },
         other => other.to_string(),
     }
 }
@@ -210,9 +231,32 @@ mod tests {
 
     #[test]
     fn macos_is_bsd_and_linux_is_gnu() {
-        assert_eq!(Flavor::from_os("macos"), Flavor::Bsd);
-        assert_eq!(Flavor::from_os("linux"), Flavor::Gnu);
-        assert_eq!(Flavor::from_os("plan9"), Flavor::Unknown);
+        assert_eq!(Flavor::detect("macos", None), Flavor::Bsd);
+        assert_eq!(Flavor::detect("linux", None), Flavor::Gnu);
+        assert_eq!(Flavor::detect("plan9", None), Flavor::Unknown);
+    }
+
+    #[test]
+    fn git_bash_is_gnu_despite_running_on_windows() {
+        // MSYS2 ships GNU coreutils, so GNU flags are the correct advice there.
+        assert_eq!(Flavor::detect("windows", Some("MINGW64")), Flavor::Gnu);
+        assert_eq!(Flavor::detect("windows", Some("MSYS")), Flavor::Gnu);
+    }
+
+    #[test]
+    fn windows_without_msys_stays_unknown() {
+        // PowerShell and cmd are not served by this tool; claiming a dialect
+        // would produce confidently wrong flags.
+        assert_eq!(Flavor::detect("windows", None), Flavor::Unknown);
+        assert_eq!(Flavor::detect("windows", Some("")), Flavor::Unknown);
+    }
+
+    #[test]
+    fn the_os_label_names_the_msys_environment() {
+        let label = pretty_os("windows", Some("MINGW64"));
+        assert!(label.contains("MINGW64"));
+        assert!(label.contains("Git Bash"));
+        assert_eq!(pretty_os("windows", None), "Windows");
     }
 
     #[test]

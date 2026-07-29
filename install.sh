@@ -13,6 +13,8 @@ set -eu
 
 REPO="harshtomar6/utter"
 BIN="utter"
+# Overridden to utter.exe on Windows by detect_target.
+BIN_FILE="utter"
 INSTALL_DIR="${UTTER_INSTALL_DIR:-$HOME/.local/bin}"
 ALIAS=""
 NO_MODIFY_RC=0
@@ -59,13 +61,28 @@ detect_target() {
     case "$kernel" in
         Darwin) os="apple-darwin" ;;
         Linux)  os="unknown-linux-gnu" ;;
-        *) die "unsupported OS: $kernel (build from source: cargo install --git https://github.com/$REPO)" ;;
+        # Git Bash and MSYS2 report MINGW64_NT-*, MSYS_NT-* or CYGWIN_NT-*. They
+        # are real bash with real readline, so the Ctrl-G integration works; the
+        # binary itself is an ordinary Windows .exe.
+        MINGW*|MSYS*|CYGWIN*) os="pc-windows-msvc" ;;
+        *) die "unsupported OS: $kernel
+
+utter supports macOS, Linux, and Windows via Git Bash / MSYS2.
+  - PowerShell and cmd.exe are not supported: buffer insertion needs PSReadLine,
+    which is a different mechanism entirely.
+  - WSL works today — install from inside it and you get the full Linux build.
+  - Or build from source: cargo install --git https://github.com/$REPO" ;;
     esac
     case "$machine" in
         arm64|aarch64) arch="aarch64" ;;
         x86_64|amd64)  arch="x86_64" ;;
         *) die "unsupported architecture: $machine" ;;
     esac
+    # Only x86_64 Windows is published; arm64 Windows would need its own target.
+    if [ "$os" = "pc-windows-msvc" ] && [ "$arch" != "x86_64" ]; then
+        die "no Windows build for $machine yet (x86_64 only) — build from source:
+  cargo install --git https://github.com/$REPO"
+    fi
     printf '%s-%s' "$arch" "$os"
 }
 
@@ -100,15 +117,22 @@ download() {
     # down, in a `utter-<target>/` directory, which the `find` below handles.
     tar -xf "$tmp/utter.tar.xz" -C "$tmp" \
         || die "could not unpack the archive (does your tar support xz?)"
-    found=$(find "$tmp" -type f -name "$BIN" -perm -u+x 2>/dev/null | head -1)
-    [ -n "$found" ] || die "archive did not contain a $BIN binary"
+    # No -perm test: MSYS reports permissions differently, and the archive only
+    # ever contains the one executable anyway.
+    found=$(find "$tmp" -type f -name "$BIN_FILE" 2>/dev/null | head -1)
+    [ -n "$found" ] || die "archive did not contain $BIN_FILE"
 
     mkdir -p "$dest"
     # Move into place via a temp name in the SAME directory, so an upgrade cannot
     # leave a half-written binary if the copy is interrupted.
-    cp "$found" "$dest/.$BIN.new"
-    chmod +x "$dest/.$BIN.new"
-    mv "$dest/.$BIN.new" "$dest/$BIN"
+    cp "$found" "$dest/.$BIN_FILE.new"
+    chmod +x "$dest/.$BIN_FILE.new"
+    # Replacing a running .exe fails on Windows; move the old one aside first.
+    if [ -f "$dest/$BIN_FILE" ]; then
+        mv "$dest/$BIN_FILE" "$dest/.$BIN_FILE.old" 2>/dev/null || true
+    fi
+    mv "$dest/.$BIN_FILE.new" "$dest/$BIN_FILE"
+    rm -f "$dest/.$BIN_FILE.old" 2>/dev/null || true
     rm -rf "$tmp"
     trap - EXIT INT TERM
 }
@@ -319,17 +343,22 @@ configure_key() {
 # -------------------------------------------------------------------- main ---
 
 target=$(detect_target)
+# Set here rather than in detect_target: that runs inside `$(...)`, a subshell, so
+# an assignment there would never reach this scope.
+case "$target" in
+    *windows*) BIN_FILE="${BIN}.exe" ;;
+esac
 say "installing utter for $target"
 download "$target" "$INSTALL_DIR"
-say "installed $INSTALL_DIR/$BIN"
+say "installed $INSTALL_DIR/$BIN_FILE"
 
 shell=$(detect_shell)
 if [ -z "$shell" ]; then
     warn ""
     warn "could not identify your shell from \$SHELL (${SHELL:-unset})."
     warn "add the matching line to your rc file by hand:"
-    warn "  zsh/bash:  eval \"\$($INSTALL_DIR/$BIN init <shell>)\""
-    warn "  fish:      $INSTALL_DIR/$BIN init fish | source"
+    warn "  zsh/bash:  eval \"\$($INSTALL_DIR/$BIN_FILE init <shell>)\""
+    warn "  fish:      $INSTALL_DIR/$BIN_FILE init fish | source"
     exit 0
 fi
 
@@ -344,9 +373,9 @@ fi
 say "shell: $shell, function name: $name"
 
 if [ "$shell" = "fish" ]; then
-    line="$INSTALL_DIR/$BIN init fish --alias $name | source"
+    line="$INSTALL_DIR/$BIN_FILE init fish --alias $name | source"
 else
-    line="eval \"\$($INSTALL_DIR/$BIN init $shell --alias $name)\""
+    line="eval \"\$($INSTALL_DIR/$BIN_FILE init $shell --alias $name)\""
 fi
 
 if [ "$NO_MODIFY_RC" -eq 1 ]; then

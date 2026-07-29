@@ -24,8 +24,25 @@ fn binary_path() -> String {
     std::env::current_exe()
         .ok()
         .filter(|p| p.is_absolute())
-        .map(|p| p.display().to_string())
+        .map(|p| for_shell(&p.display().to_string()))
         .unwrap_or_else(|| "utter".to_string())
+}
+
+/// Rewrites a native path into one the emitted shell script can actually use.
+///
+/// On Windows `current_exe()` returns `C:\Users\me\utter.exe`. Inside the single
+/// quotes of a bash script those backslashes are literal, so the path never
+/// resolves — Git Bash needs `C:/Users/me/utter.exe`. Forward slashes are
+/// accepted for drive-letter paths, so this is a straight substitution.
+///
+/// A no-op everywhere else: a backslash in a Unix path is a legitimate filename
+/// character and must be left alone.
+fn for_shell(path: &str) -> String {
+    if cfg!(windows) {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    }
 }
 
 /// Single-quotes a value for POSIX shells, escaping embedded single quotes.
@@ -40,7 +57,9 @@ fn sq_fish(value: &str) -> String {
 
 pub fn init_script(shell: ShellKind, alias: &str, shell_dir: &Path) -> String {
     let bin = binary_path();
-    let dir = shell_dir.display().to_string();
+    // Same reason as `binary_path`: the hooks redirect into this directory, so on
+    // Windows it has to be spelled the way bash can use it.
+    let dir = for_shell(&shell_dir.display().to_string());
     match shell {
         ShellKind::Zsh => zsh(alias, &bin, &dir),
         ShellKind::Fish => fish(alias, &bin, &dir),
@@ -156,6 +175,11 @@ end
 /// bash has no `print -z` equivalent, so the UX shape genuinely differs: type the
 /// request on the command line, press Ctrl-G, and readline replaces it with the
 /// command. `bind -x` is the only mechanism that can write `READLINE_LINE`.
+///
+/// This is also the Windows path. Git Bash and MSYS2 are real bash with real
+/// readline, so the same script serves them; `for_shell` handles the one
+/// difference that matters, which is the path separator. PowerShell is not served
+/// here at all — its line editor is PSReadLine and needs its own integration.
 ///
 /// The last-command hook uses the `DEBUG` trap, bash's nearest thing to `preexec`.
 /// Known limitation: `DEBUG` fires once per simple command, so for a pipeline
@@ -489,8 +513,35 @@ mod tests {
     }
 
     #[test]
+    fn for_shell_leaves_unix_paths_alone() {
+        // A backslash is a legal character in a Unix filename.
+        if !cfg!(windows) {
+            assert_eq!(
+                for_shell("/home/u/odd\\name/utter"),
+                "/home/u/odd\\name/utter"
+            );
+            assert_eq!(for_shell("/usr/local/bin/utter"), "/usr/local/bin/utter");
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn for_shell_converts_windows_separators() {
+        // Backslashes inside a bash single-quoted string are literal, so the
+        // path would never resolve under Git Bash.
+        assert_eq!(
+            for_shell("C:\\Users\\me\\.local\\bin\\utter.exe"),
+            "C:/Users/me/.local/bin/utter.exe"
+        );
+    }
+
+    #[test]
     fn binary_path_is_absolute_or_the_bare_name() {
         let p = binary_path();
-        assert!(p.starts_with('/') || p == "utter", "got {p}");
+        // A Windows path is drive-qualified rather than root-anchored.
+        let plausible = p.starts_with('/')
+            || p == "utter"
+            || (p.len() > 2 && p.as_bytes()[1] == b':' && p.contains('/'));
+        assert!(plausible, "got {p}");
     }
 }

@@ -106,9 +106,19 @@ echo 'utter init fish | source' >> ~/.config/fish/config.fish   # fish
 
 | Shell | How the command reaches you | Mechanism |
 |---|---|---|
-| zsh  | `ask <request>` → command at your next prompt | `print -z` |
+| zsh  | `ask <request>` → command at your next prompt | `print -rz` |
 | fish | `ask <request>` → command on the command line | `commandline -r` |
 | bash | type the request, press **Ctrl-G** | `bind -x` + `READLINE_LINE` |
+
+Platforms: macOS and Linux on x86_64 and arm64, plus **Windows x86_64 via Git
+Bash / MSYS2**, which is real bash and uses the Ctrl-G flow above. WSL works too
+— install inside it and you get the Linux build.
+
+**PowerShell and cmd.exe are not supported.** Buffer insertion there means
+PSReadLine rather than readline, a different mechanism needing its own
+integration, and the danger scanner is unix-shaped: `rm -rf /` is meaningless
+where the hazard is `Remove-Item -Recurse -Force`. It is a second integration
+rather than a flag, so it is not pretended at.
 
 **bash works differently, and that is not a bug.** bash has no equivalent of
 `print -z`; the only way to write the input buffer is `bind -x`, which needs a
@@ -149,7 +159,8 @@ history_token_budget = 8000
 gateway or a local model — see the privacy note below.
 
 State lives in `~/.local/state/utter/` (sessions and last-command records), on
-Linux **and** macOS. `directories` would put this under
+Linux, macOS **and** Windows — under Git Bash `~` is your user profile, so the
+paths agree with what the shell shows you. `directories` would put this under
 `~/Library/Application Support` on macOS, but the shell hooks and the installer
 need one documented path per file on both platforms.
 
