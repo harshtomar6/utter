@@ -16,6 +16,13 @@ on:
 permissions:
   contents: write
 
+# windows-latest defaults `run:` steps to PowerShell, where `"$DIST_VERSION"` is a
+# PowerShell variable and expands to nothing. GitHub ships bash on every runner,
+# so pinning it keeps one syntax across all five targets.
+defaults:
+  run:
+    shell: bash
+
 env:
   DIST_VERSION: 0.32.0
 
