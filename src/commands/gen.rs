@@ -10,6 +10,7 @@ use crate::conversation;
 use crate::error::UtterError;
 use crate::llm::{self, tools, Client, ModelOutcome};
 use crate::output;
+use crate::piped;
 use crate::prompt::{self, Failure, PromptInput};
 use crate::scanner;
 use crate::session::{self, Continuity, LoadOptions, SessionKey, ShellState};
@@ -31,18 +32,25 @@ pub async fn run(args: &GenArgs, global: &GlobalArgs, cfg: &Config, paths: &Path
     let key = SessionKey::resolve();
     let idle = Duration::from_secs(cfg.session_idle_secs);
 
-    // Bare invocation means "fix whatever just failed".
+    // Piping is a deliberate act, so it takes precedence over the bare-invocation
+    // reading: `cmd | ask` means "explain this", not "fix the last failure".
+    let piped = piped::read(cfg.captured_output_limit);
+
     let raw_request = args.request();
-    let (request, failure) = if raw_request.is_empty() {
+    let (request, failure) = if !raw_request.is_empty() {
+        (raw_request, None)
+    } else if piped.is_some() {
+        ("Explain what this output means.".to_string(), None)
+    } else {
+        // Bare invocation with nothing piped: fix whatever just failed.
         let state = resolve_failure(paths, &key, idle, global)?;
         (describe_failure(&state), Some(state))
-    } else {
-        (raw_request, None)
     };
 
     let ctx = ShellContext::probe();
     let system = prompt::build(&PromptInput {
         ctx: &ctx,
+        piped: piped.as_deref(),
         failure: failure.as_ref().map(|f| Failure {
             command: &f.command,
             exit_code: f.exit_code,

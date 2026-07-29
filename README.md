@@ -30,6 +30,30 @@ Shell hooks record the last command and its exit code, so a bare `ask` means
 "explain and fix that." This is the thing a launched-app assistant structurally
 cannot do.
 
+## When the output needs explaining
+
+Pipe it back:
+
+```
+$ ps axo pid,rss,comm | sort -nrk2 | head | ask why is my ram full
+firefox is using ~7.6 GB of resident memory, by far the largest consumer.
+```
+
+The answer goes to stderr, so nothing lands in your input buffer. Drop the
+question and it just explains what it sees:
+
+```
+$ kubectl describe pod api-7f9 | ask
+```
+
+You run the command, you look at the result, and you decide what the model sees.
+Nothing is captured behind your back and nothing runs on the model's behalf.
+
+Piped text is untrusted — a log or an HTTP response may contain text shaped like
+an instruction. It is fenced and labelled as data, and the model is told to
+describe such text rather than act on it. That is a mitigation, not a guarantee,
+which is why a human stays between the model and execution.
+
 ## Install
 
 ```sh
@@ -171,8 +195,9 @@ model provider:
 - which of a fixed list of tools are on your `PATH`
 - for a bare `ask`: the failed command text, its exit code, and its directory
 
-Command **output** is never sent in v1 — the shell hooks cannot see it, and
-capturing it is deferred to Phase 2 precisely because it raises the stakes.
+Command **output** is sent only when you pipe it in yourself (`cmd | ask ...`).
+The shell hooks cannot see output and never capture it; nothing leaves the
+machine unless you put it there.
 
 Working directory paths and command text routinely contain project, client and
 hostname information. If that matters to you:

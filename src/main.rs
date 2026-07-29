@@ -10,6 +10,7 @@ mod conversation;
 mod error;
 mod llm;
 mod output;
+mod piped;
 mod prompt;
 mod risk;
 mod scanner;
