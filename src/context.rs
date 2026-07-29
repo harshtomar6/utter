@@ -54,6 +54,31 @@ impl Flavor {
             Flavor::Unknown => "- coreutils dialect unknown; prefer POSIX-portable flags only",
         }
     }
+
+    /// Which human-readable-output tools actually exist on this dialect.
+    ///
+    /// Kept separate from `guidance` because the failure mode is different: that
+    /// one stops the command from running at all, this one stops it from
+    /// answering the question. `numfmt` is GNU-only and its absence on macOS is
+    /// the trap worth naming — it is the obvious reach for formatting bytes.
+    pub fn output_guidance(self) -> &'static str {
+        match self {
+            Flavor::Bsd => concat!(
+                "Human-readable output on this machine:\n",
+                "- `du -h`, `ls -lh`, `df -h` are available; `sort -h` sorts those suffixes\n",
+                "- for largest-files, `find ... -exec du -h {} + | sort -rh | head` beats \
+                 `stat -f %z` piped to `sort -rn`, which prints undecorated bytes\n",
+                "- there is NO `numfmt` here (GNU only); use a `-h` flag or `awk` arithmetic\n",
+                "- `ps` reports RSS in kilobytes: divide in `awk` and label the unit\n",
+            ),
+            Flavor::Gnu => concat!(
+                "Human-readable output on this machine:\n",
+                "- `du -h`, `ls -lh`, `df -h`, `sort -h` and `numfmt --to=iec` are all available\n",
+                "- `ps` reports RSS in kilobytes: divide in `awk` or pipe through `numfmt`\n",
+            ),
+            Flavor::Unknown => "Prefer `-h` style flags for sizes where the tool offers them.\n",
+        }
+    }
 }
 
 /// Tools worth telling the model about. Looked up via PATH only — `which` does no
